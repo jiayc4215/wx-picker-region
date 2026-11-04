@@ -1,0 +1,26 @@
+{
+  "name": "wx-picker-region-exporter",
+  "version": "1.0.0",
+  "description": "Export the local WeChat mini program picker region dataset as a JSON tree",
+  "type": "module",
+  "main": "./src/cli.js",
+  "bin": {
+    "wx-region-export": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "node --test",
+    "build:mac": "pkg . --targets node20-macos-arm64,node20-macos-x64 --out-path dist",
+    "build:win": "pkg . --targets node20-win-x64 --out-path dist"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "scripts": "src/**/*.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
