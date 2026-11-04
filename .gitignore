@@ -1,9 +1,6 @@
 # Dependencies
 node_modules/
 
-# Packaged binaries
-dist/
-
 # Local export output
 /region.json
 

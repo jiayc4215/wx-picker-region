@@ -1,13 +1,13 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
-import path from 'node:path';
-import { parseRegionSource } from './region.js';
+const { readdir, readFile, stat } = require('node:fs/promises');
+const path = require('node:path');
+const { parseRegionSource } = require('./region.js');
 
 const SOURCE_NAME = 'region_sub_strict_third';
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_DEPTH = 12;
 const SKIP_DIRS = new Set(['node_modules', 'logs', 'log', 'gpuCache', 'code cache', 'weappvendor']);
 
-export async function scanRoots(roots) {
+async function scanRoots(roots) {
   const matches = [];
   const diagnostics = [];
   const visited = new Set();
@@ -49,3 +49,5 @@ export async function scanRoots(roots) {
   matches.sort((a, b) => a.rootIndex - b.rootIndex);
   return { matches, diagnostics };
 }
+
+module.exports = { scanRoots };

@@ -1,7 +1,7 @@
-import os from 'node:os';
-import path from 'node:path';
+const os = require('node:os');
+const path = require('node:path');
 
-export function getSearchRoots(platform = process.platform, env = process.env, home = os.homedir()) {
+function getSearchRoots(platform = process.platform, env = process.env, home = os.homedir()) {
   if (platform === 'darwin') {
     return [
       '/Applications/wechatwebdevtools.app/Contents/Resources/package.nw/js/libs',
@@ -29,3 +29,5 @@ export function getSearchRoots(platform = process.platform, env = process.env, h
     path.join(home, '.config', '微信开发者工具')
   ];
 }
+
+module.exports = { getSearchRoots };

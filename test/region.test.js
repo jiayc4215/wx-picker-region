@@ -1,11 +1,11 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { parseRegionSource } from '../src/region.js';
-import { getSearchRoots } from '../src/paths.js';
-import { scanRoots } from '../src/scanner.js';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { mkdtemp, mkdir, rm, writeFile } = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { parseRegionSource } = require('../src/region.js');
+const { getSearchRoots } = require('../src/paths.js');
+const { scanRoots } = require('../src/scanner.js');
 
 const provinces = [
   ['110000', '北京市'], ['120000', '天津市'], ['130000', '河北省'], ['140000', '山西省'],
