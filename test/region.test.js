@@ -72,13 +72,15 @@ test('returns platform-specific install and cache roots', () => {
     ProgramFiles: 'C:\\Program Files',
     LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local',
     APPDATA: 'C:\\Users\\test\\AppData\\Roaming'
-  }, 'C:\\Users\\test');
-  assert.equal(winRoots[0], path.join(
+  }, 'C:\\Users\\test', ['D:']);
+  assert.equal(winRoots[0], path.win32.join(
     'C:\\Program Files (x86)', 'Tencent', '微信web开发者工具', 'code', 'package.nw', 'js', 'libs'
   ));
   assert.ok(winRoots.some((root) => root.includes('Program Files (x86)')));
   assert.ok(winRoots.some((root) => root.includes('AppData')));
   assert.ok(winRoots.some((root) => root.includes('Roaming')));
+  assert.ok(winRoots.includes('D:\\Program Files (x86)\\Tencent\\微信web开发者工具\\code\\package.nw\\js\\libs'));
+  assert.ok(winRoots.includes('D:\\Tencent\\微信web开发者工具\\package.nw\\js\\libs'));
 });
 
 test('scans only the named local library and returns the parsed data', async () => {

@@ -44,7 +44,7 @@ Windows PowerShell：
 npm start -- --output ./region.json
 ```
 
-工具会优先查找微信开发者工具安装目录，再扫描用户数据缓存中的 `WeappCode` 版本目录。macOS 常见位置包括 `/Applications/wechatwebdevtools.app/Contents/Resources/package.nw/js/libs` 和 `~/Library/Application Support/微信开发者工具/<实例>/WeappCode/.../js/libs`；Windows 会检查 `C:\Program Files (x86)\Tencent\微信web开发者工具\code\package.nw\js\libs`、无 `code` 子目录的安装布局，以及 `%LOCALAPPDATA%` 和 `%APPDATA%` 下的 `微信开发者工具` 缓存。也可以补充自定义目录：
+工具会优先查找微信开发者工具安装目录，再扫描用户数据缓存中的 `WeappCode` 版本目录。macOS 常见位置包括 `/Applications/wechatwebdevtools.app/Contents/Resources/package.nw/js/libs` 和 `~/Library/Application Support/微信开发者工具/<实例>/WeappCode/.../js/libs`。Windows 使用 `ProgramFiles`、`LOCALAPPDATA` 和 `APPDATA` 环境变量，并检查其他已挂载盘符下的常见 `Tencent/微信web开发者工具` 安装布局，兼容 `code/package.nw/js/libs` 和无 `code` 子目录的版本。也可以补充自定义目录：
 
 ```sh
 npm start -- --root "/自定义/微信数据目录" --output ./region.json
