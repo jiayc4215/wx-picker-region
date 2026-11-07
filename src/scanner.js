@@ -1,91 +1,47 @@
-const { open, readdir, readFile, stat } = require('node:fs/promises');
+const { readdir } = require('node:fs/promises');
 const path = require('node:path');
-const { parseRegionSource } = require('./region.js');
 
+const { parseRegionSource } = require('./region.js');
+const { readSourceFromAsar } = require('./readers/asar.js');
+const { readSourceFromFile } = require('./readers/plain.js');
+
+// 微信官方地区库的核心数据源文件名
 const SOURCE_NAME = 'region_sub_strict_third';
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
-// asar 索引是 JSON，正常只有几百 KB，上限仅用于防御损坏的文件。
-const MAX_ASAR_HEADER_BYTES = 64 * 1024 * 1024;
+// 最大递归遍历深度，避免在超深文件系统中耗尽资源
 const MAX_DEPTH = 12;
-// app.asar.unpacked 是 asar 的已解包内容，遍历它会和 asar 内条目重复。
+// 遍历目录时的剪枝黑名单：
+// 1. node_modules, logs 等体积庞大且不包含业务资源的目录；
+// 2. app.asar.unpacked 是 asar 的已解包目录，直接遍历会与 asar 包内条目重复。
 const SKIP_DIRS = new Set([
   'node_modules', 'logs', 'log', 'gpucache', 'code cache', 'weappvendor',
   'app.asar.unpacked', 'vsextensions', 'locales', 'inspector_overlay'
 ]);
 
-// fs.read 不保证一次读满，循环补齐到 buffer 长度或文件末尾。
-async function readFully(handle, buffer, position) {
-  let offset = 0;
-  while (offset < buffer.length) {
-    const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, position + offset);
-    if (bytesRead === 0) break;
-    offset += bytesRead;
-  }
-  return offset;
-}
-
-// asar 的目录在索引里表示为 { files: { 名称: 节点 } }，叶子节点带 size/offset。
-function findAsarEntry(node, prefix) {
-  for (const [name, value] of Object.entries(node.files ?? {})) {
-    const current = prefix ? `${prefix}/${name}` : name;
-    if (value.files) {
-      const nested = findAsarEntry(value, current);
-      if (nested) return nested;
-    } else if (name === SOURCE_NAME) {
-      return { path: current, entry: value };
-    }
-  }
-  return null;
-}
-
-// asar 布局：8 字节头（4 字节 size + 4 字节 headerSize）+ JSON 索引 + 数据区；
-// JSON 长度在偏移 12 处，文件数据的 offset 相对数据区起点。
-async function readSourceFromAsar(asarPath) {
-  const handle = await open(asarPath, 'r');
-  try {
-    const prefix = Buffer.alloc(16);
-    if (await readFully(handle, prefix, 0) < prefix.length) return null;
-    const jsonLength = prefix.readUInt32LE(12);
-    if (jsonLength <= 0 || jsonLength > MAX_ASAR_HEADER_BYTES) return null;
-
-    const jsonBuffer = Buffer.alloc(jsonLength);
-    if (await readFully(handle, jsonBuffer, 16) < jsonLength) return null;
-    let header;
-    try {
-      header = JSON.parse(jsonBuffer.toString('utf8'));
-    } catch {
-      return null;
-    }
-
-    const hit = findAsarEntry(header, '');
-    if (!hit) return null;
-    const label = `${asarPath}!/${hit.path}`;
-
-    // unpacked 条目不在 asar 数据区，而是在 <asar>.unpacked 下有实体文件。
-    if (hit.entry.unpacked) {
-      const unpackedPath = path.join(`${asarPath}.unpacked`, ...hit.path.split('/'));
-      return { label, text: await readFile(unpackedPath, 'utf8') };
-    }
-
-    const size = Number(hit.entry.size);
-    if (!Number.isInteger(size) || size > MAX_FILE_BYTES) throw new Error('源文件超过 2 MB');
-    // 数据区起点 = 8 字节头 + headerSize。
-    const dataStart = 8 + prefix.readUInt32LE(4);
-    const buffer = Buffer.alloc(size);
-    if (await readFully(handle, buffer, dataStart + Number(hit.entry.offset)) < size) {
-      throw new Error('asar 内容读取不完整');
-    }
-    return { label, text: buffer.toString('utf8') };
-  } finally {
-    await handle.close();
-  }
-}
-
+/**
+ * 扫描指定的一组根目录，提取微信开发者工具的内置地区库
+ * 
+ * 架构流程：
+ * 1. 递归向下遍历各搜索根目录（受到 MAX_DEPTH 和 SKIP_DIRS 约束）；
+ * 2. 对每个遇到的条目进行类型分流：
+ *    - 若是 .asar 文件：分流至 ASAR 封包读取器（readSourceFromAsar）；
+ *    - 若是目标普通文件：分流至普通文件读取器（readSourceFromFile）；
+ * 3. 提取成功后，通过 parseRegionSource 校验并解析成省市区树；
+ * 4. 按根目录的初始优先级（rootIndex）排序输出，优先采用安装目录的官方版本。
+ * 
+ * @param {string[]} roots 待扫描的根目录路径列表
+ * @returns {Promise<{ matches: Array<{ file: string, tree: Array<any>, counts: object, rootIndex: number }>, diagnostics: Array<object> }>}
+ */
 async function scanRoots(roots) {
   const matches = [];
   const diagnostics = [];
   const visited = new Set();
 
+  /**
+   * 递归遍历目录
+   * @param {string} current 当前目录物理路径
+   * @param {number} depth 当前递归深度
+   * @param {number} rootIndex 当前来源在 roots 数组中的索引（表示优先级）
+   */
   async function walk(current, depth, rootIndex) {
     if (depth > MAX_DEPTH) return;
     let entries;
@@ -97,19 +53,29 @@ async function scanRoots(roots) {
 
     for (const entry of entries) {
       const fullPath = path.join(current, entry.name);
+
+      // 处理子目录（排除黑名单后继续递归）
       if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name.toLowerCase())) await walk(fullPath, depth + 1, rootIndex);
+        if (!SKIP_DIRS.has(entry.name.toLowerCase())) {
+          await walk(fullPath, depth + 1, rootIndex);
+        }
         continue;
       }
+
       const isAsar = entry.isFile() && entry.name.toLowerCase().endsWith('.asar');
-      if (!entry.isFile() || (!isAsar && entry.name !== SOURCE_NAME) || visited.has(fullPath)) continue;
+      // 仅处理未访问过的 .asar 归档文件 或 目标实体文件
+      if (!entry.isFile() || (!isAsar && entry.name !== SOURCE_NAME) || visited.has(fullPath)) {
+        continue;
+      }
       visited.add(fullPath);
 
       try {
         let text;
         let reportedPath = fullPath;
+
         if (isAsar) {
-          const extracted = await readSourceFromAsar(fullPath);
+          // 方式 A：从 ASAR 二进制归档中提取虚拟条目
+          const extracted = await readSourceFromAsar(fullPath, SOURCE_NAME);
           if (!extracted) {
             diagnostics.push({ file: fullPath, error: `asar 内未找到 ${SOURCE_NAME}` });
             continue;
@@ -117,11 +83,18 @@ async function scanRoots(roots) {
           text = extracted.text;
           reportedPath = extracted.label;
         } else {
-          const fileStat = await stat(fullPath);
-          if (fileStat.size > MAX_FILE_BYTES) throw new Error('源文件超过 2 MB');
-          text = await readFile(fullPath, 'utf8');
+          // 方式 B：从普通物理磁盘文件中直接读取
+          const extracted = await readSourceFromFile(fullPath);
+          text = extracted.text;
+          reportedPath = extracted.label;
         }
-        matches.push({ file: reportedPath, ...parseRegionSource(text), rootIndex });
+
+        // 解析并强校验文本数据
+        matches.push({
+          file: reportedPath,
+          ...parseRegionSource(text),
+          rootIndex
+        });
       } catch (error) {
         diagnostics.push({ file: fullPath, error: error.message });
       }
@@ -133,8 +106,11 @@ async function scanRoots(roots) {
     await walk(roots[index], 0, index);
   }
 
+  // 按根目录顺序排序，确保安装目录版本排在用户缓存版本前面
   matches.sort((a, b) => a.rootIndex - b.rootIndex);
   return { matches, diagnostics };
 }
 
-module.exports = { scanRoots };
+module.exports = {
+  scanRoots
+};

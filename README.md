@@ -44,11 +44,37 @@ Windows PowerShell：
 npm start -- --output ./region.json
 ```
 
-工具会优先查找微信开发者工具安装目录，再扫描用户数据缓存中的 `WeappCode` 版本目录。macOS 常见位置包括 `/Applications/wechatwebdevtools.app/Contents/Resources/package.nw/js/libs` 和 `~/Library/Application Support/微信开发者工具/<实例>/WeappCode/.../js/libs`。Windows 使用 `ProgramFiles`、`LOCALAPPDATA` 和 `APPDATA` 环境变量，并检查其他已挂载盘符下的常见 `Tencent/微信web开发者工具` 安装布局，兼容 `code/package.nw/js/libs` 和无 `code` 子目录的版本。也可以补充自定义目录：
+也可以补充自定义扫描目录：
 
 ```sh
 npm start -- --root "/自定义/微信数据目录" --output ./region.json
 ```
+
+## 平台定位策略与工作原理
+
+针对各操作系统与不同时期的微信开发者工具架构，工具采用分层模块化定位（详见 `src/platforms/`）：
+
+### 1. macOS 平台定位 (`src/platforms/mac.js`)
+- **标准应用安装包**：查找 `/Applications/wechatwebdevtools.app` 与 `/Applications/微信开发者工具.app` 下的 `Contents/Resources/package.nw/js/libs`。
+- **用户数据与基础库缓存**：扫描 `~/Library/Application Support/微信开发者工具`，覆盖开发期动态下载的基础库副本。
+
+### 2. Windows 旧版散装模式 (`src/platforms/win-legacy.js`)
+- **适用场景**：早期的微信开发者工具（基于 NW.js 散装目录架构）。
+- **静态模式穷举**：覆盖 `Program Files`、`Program Files (x86)` 以及系统中已挂载的所有非系统盘（D:、E: 等）。
+- **结构变体兼容**：自动兼容 `code/package.nw/js/libs` 和无 `code` 层的 `package.nw/js/libs` 路径。
+
+### 3. Windows 新版封包与动态探测 (`src/platforms/win-modern.js`)
+- **适用场景**：新版开发者工具打包为 `.asar` 二进制归档，或安装在自定义路径、免安装绿色版等场景。
+- **注册表多维度查询**：
+  - 自动覆盖 64位系统级、32位 WOW6432Node、当前用户级（HKCU）三处卸载注册表；
+  - 提取 `InstallLocation`、`UninstallString`、`DisplayIcon` 反推真实安装路径；
+  - **OEM 编码自愈**：Windows 控制台的 OEM 代码页（GBK、UTF-8、BIG5、Shift_JIS 等）不可预知，代码依次尝试多种字符集解码，并结合实际磁盘落盘校验，剔除乱码和残留路径。
+- **磁盘受限遍历兜底**：当注册表未命中时，在挂载磁盘中按名称探测；严格限制最大遍历深度为 3 层，并设 1.5 秒硬性超时熔断，且自动跳过 `Windows`、`node_modules` 等无关大型目录。
+- **运行时数据与缓存**：覆盖 `%LOCALAPPDATA%\微信开发者工具` 和 `%APPDATA%\微信开发者工具` 目录。
+
+### 4. 零依赖 ASAR 提取与数据解析
+- **自建 ASAR 二进制解码器** (`src/scanner.js`)：无需安装外部 npm 依赖，通过解析 ASAR 头部 16 字节与 JSON 虚拟目录清单，直接计算文件在二进制流中的 offset 进行切片读取，毫秒级提取；同时支持 `app.asar.unpacked` 实体目录。
+- **格式解析与校验** (`src/region.js`)：通过全角空格数（0格省、2格市、3格区）识别层级；严格校验 34 个省级行政区编码、前缀从属关系和非空子节点，杜绝输出脏数据。
 
 ## 重新构建程序
 
@@ -93,7 +119,7 @@ npm run build:win
 
 转换器复用开发者工具读取该库的行格式：每行包含 6 位行政区划码、带层级缩进的地区名和邮编；0 格缩进为省、2 格全角空格为市、3 格为区县。缩进决定层级，编码前缀用于校验父子关系。导出前校验 34 个省级地区、父级关系和三级结构；源库存在重复行政码时会原样保留。若工具安装位置不同，可用 `--root` 指定包含 `region_sub_strict_third` 的目录。微信开发者工具升级后，该内置库可能变化；本工具只读文件，不修改其内容。
 
-## 开发
+## 开发与测试
 
 ```sh
 npm test
